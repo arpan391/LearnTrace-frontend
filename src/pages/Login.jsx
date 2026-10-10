@@ -1,44 +1,93 @@
+
 import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
 function Login() {
-    const navigate = useNavigate();
+  const navigate = useNavigate();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
   const handleLogin = async () => {
-  try {
-    const response = await axios.post(
-      "http://localhost:8080/auth/login",
-      {
-        email: email,
-        password: password,
+    if (!email.trim() || !password) {
+      alert("Please enter your email and password.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const response = await axios.post(
+        "https://learntrace-backend-vp2a.onrender.com/auth/login",
+        {
+          email: email.trim(),
+          password: password,
+        }
+      );
+
+      const message =
+        typeof response.data === "string"
+          ? response.data
+          : response.data?.message || "Login successful";
+
+      let studentName = "";
+
+      if (typeof response.data === "object" && response.data !== null) {
+        studentName =
+          response.data.name ||
+          response.data.fullName ||
+          response.data.username ||
+          response.data.studentName ||
+          "";
       }
-    );
 
-   const studentName = response.data.split(" for ")[1];
+      if (!studentName && typeof response.data === "string") {
+        studentName = response.data.split(" for ")[1] || "";
+      }
 
-alert(response.data);
+      studentName = studentName.trim();
 
-navigate("/dashboard", {
-  state: {
-    name: studentName,
-    email: email,
-  },
-});
-} catch (error) {
-  console.log(error);
-  alert(error.response?.data || error.message);
-}
-};
+      const user = {
+        name: studentName,
+        email: email.trim(),
+      };
+
+      localStorage.setItem("user", JSON.stringify(user));
+
+      alert(message);
+
+      navigate("/dashboard", {
+        state: {
+          name: user.name,
+          email: user.email,
+        },
+      });
+    } catch (error) {
+      console.error("Login error:", error);
+
+      const errorMessage =
+        typeof error.response?.data === "string"
+          ? error.response.data
+          : error.response?.data?.message ||
+            error.response?.data?.error ||
+            error.message ||
+            "Login failed. Please try again.";
+
+      alert(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    
     <div style={styles.page}>
       <div style={styles.card}>
         <div style={styles.logo}>LT</div>
 
         <h1 style={styles.title}>LearnTrace</h1>
+
         <p style={styles.subtitle}>
           Understand what you know. Discover what you need to learn.
         </p>
@@ -50,7 +99,9 @@ navigate("/dashboard", {
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleLogin()}
           style={styles.input}
+          autoComplete="email"
         />
 
         <input
@@ -58,22 +109,31 @@ navigate("/dashboard", {
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleLogin()}
           style={styles.input}
+          autoComplete="current-password"
         />
 
-        <button style={styles.button} onClick={handleLogin}>
-          Login
+        <button
+          style={{
+            ...styles.button,
+            opacity: loading ? 0.7 : 1,
+          }}
+          onClick={handleLogin}
+          disabled={loading}
+        >
+          {loading ? "Logging in..." : "Login"}
         </button>
 
         <p style={styles.signup}>
-  Don't have an account?{" "}
-  <span
-    onClick={() => navigate("/register")}
-    style={{ color: "#4f46e5", cursor: "pointer", fontWeight: "bold" }}
-  >
-    Register
-  </span>
-</p>
+          Don't have an account?{" "}
+          <span
+            onClick={() => navigate("/register")}
+            style={styles.register}
+          >
+            Register
+          </span>
+        </p>
       </div>
     </div>
   );
@@ -85,13 +145,17 @@ const styles = {
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
+    padding: "20px",
+    boxSizing: "border-box",
     background: "linear-gradient(135deg, #eef2ff, #f8fafc)",
     fontFamily: "Arial, sans-serif",
   },
 
   card: {
     width: "380px",
+    maxWidth: "100%",
     padding: "40px",
+    boxSizing: "border-box",
     background: "white",
     borderRadius: "20px",
     boxShadow: "0 15px 40px rgba(0,0,0,0.1)",
@@ -157,6 +221,12 @@ const styles = {
     marginTop: "20px",
     color: "#64748b",
     fontSize: "14px",
+  },
+
+  register: {
+    color: "#4f46e5",
+    cursor: "pointer",
+    fontWeight: "bold",
   },
 };
 

@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
@@ -10,12 +11,17 @@ function Register() {
   const [password, setPassword] = useState("");
 
   const handleRegister = async () => {
+    if (!name.trim() || !email.trim() || !password) {
+      alert("Please fill in all fields.");
+      return;
+    }
+
     try {
       const response = await axios.post(
-        "http://localhost:8080/auth/register",
+        "https://learntrace-backend-vp2a.onrender.com/auth/register",
         {
-          name: name,
-          email: email,
+          name: name.trim(),
+          email: email.trim(),
           password: password,
         }
       );
@@ -23,7 +29,14 @@ function Register() {
       alert("Registration successful!");
       navigate("/");
     } catch (error) {
-      alert(error.response?.data || "Registration failed");
+      console.error("Registration error:", error.response?.data || error.message);
+
+      const message = error.response?.data;
+      alert(
+        typeof message === "string"
+          ? message
+          : message?.message || "Registration failed. Please try again."
+      );
     }
   };
 
@@ -69,7 +82,12 @@ function Register() {
 
         <p style={styles.login}>
           Already have an account?{" "}
-          <span onClick={() => navigate("/")}>Login</span>
+          <span
+            onClick={() => navigate("/")}
+            style={{ cursor: "pointer", color: "#4f46e5" }}
+          >
+            Login
+          </span>
         </p>
       </div>
     </div>

@@ -1,15 +1,55 @@
+
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 
-function Quiz() {
+const API = "https://learntrace-backend-vp2a.onrender.com";
+
+function formatCodeQuestion(text) {
+  if (!text) return { prompt: "", code: "" };
+
+  const patterns = [
+    /\b(?:arr|nums|numbers|list|myList)\s*=\s*[\[({]/,
+    /\b(?:print|len|range|SELECT|INSERT|UPDATE|DELETE|CREATE|System\.out\.print|console\.log)\b/i,
+    /\b(?:int|String|double|float|public\s+static|def\s+|for\s*\(|while\s*\(|if\s*\()/,
+  ];
+
+  let index = -1;
+
+  patterns.forEach((pattern) => {
+    const match = pattern.exec(text);
+    if (match && (index === -1 || match.index < index)) {
+      index = match.index;
+    }
+  });
+
+  if (index === -1) return { prompt: text, code: "" };
+
+  const prompt = text.slice(0, index).trim();
+  let code = text.slice(index).trim();
+
+  code = code
+    .replace(/\s+(?=(?:arr|nums|numbers|myList)\s*=)/g, "\n")
+    .replace(/\s+(?=(?:print|System\.out\.print(?:ln)?|console\.log)\s*\()/g, "\n")
+    .replace(/\s+(?=(?:SELECT|INSERT|UPDATE|DELETE|CREATE)\s+)/gi, "\n")
+    .replace(/\s+(?=(?:int|String|double|float)\s+\w+\s*=)/g, "\n")
+    .replace(/\s+(?=(?:for|while|if)\s*\()/g, "\n")
+    .replace(/\s+(?=def\s+\w+\s*\()/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+
+  return { prompt, code };
+}
+
+export default function Quiz() {
   const location = useLocation();
   const navigate = useNavigate();
 
   const subject = location.state?.subject || "Data Structures";
   const concept = location.state?.concept || "";
+  const codingLab = location.state?.codingLab === true;
 
-  const assessmentTypes = {
+  const types = {
     MCQ: {
       label: "🧠 MCQ Assessment",
       description: "Test your conceptual understanding",
@@ -17,18 +57,16 @@ function Quiz() {
     },
     SCENARIO: {
       label: "🎯 Real-World Scenario",
-      description: "Test how you apply concepts in real-world situations",
+      description: "Apply concepts to real-world problems",
       badge: "APPLICATION CHALLENGE",
     },
     PRACTICAL: {
       label: "💻 Practical / Predict Output",
-      description:
-        "Test your ability to apply concepts using code, SQL, or practical problem-solving",
+      description: "Code snippets, SQL and output prediction",
       badge: "PRACTICAL CODE CHALLENGE",
     },
   };
 
-  // Practical is available for these 4 subjects
   const practicalSubjects = [
     "Data Structures",
     "DBMS",
@@ -38,130 +76,157 @@ function Quiz() {
 
   const isPracticalAvailable = practicalSubjects.includes(subject);
 
-  const [questionType, setQuestionType] = useState("MCQ");
+  const [questionType, setQuestionType] = useState(
+    codingLab && isPracticalAvailable
+      ? "PRACTICAL"
+      : location.state?.questionType || "MCQ"
+  );
   const [questions, setQuestions] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
 
-  const availableTypes = isPracticalAvailable
-    ? ["MCQ", "SCENARIO", "PRACTICAL"]
-    : ["MCQ", "SCENARIO"];
+  const availableTypes = codingLab
+    ? ["PRACTICAL"]
+    : isPracticalAvailable
+      ? ["MCQ", "SCENARIO", "PRACTICAL"]
+      : ["MCQ", "SCENARIO"];
 
   useEffect(() => {
-    if (questionType === "PRACTICAL" && !isPracticalAvailable) {
-      setQuestionType("MCQ");
+    let cancelled = false;
+
+    async function fetchQuestions() {
+      try {
+        setLoading(true);
+        setError("");
+        setQuestions([]);
+        setCurrentIndex(0);
+        setAnswers({});
+        setResult(null);
+
+        let url =
+          `${API}/questions?subject=${encodeURIComponent(subject)}` +
+          `&questionType=${encodeURIComponent(questionType)}`;
+
+        if (concept) {
+          url += `&concept=${encodeURIComponent(concept)}`;
+        }
+
+        const response = await axios.get(url);
+
+        if (!cancelled) {
+          setQuestions(Array.isArray(response.data) ? response.data : []);
+        }
+      } catch (e) {
+        console.error("Error loading questions:", e);
+        if (!cancelled) {
+          setQuestions([]);
+          setError(
+            "Unable to load questions. Check that the backend is running."
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  }, [subject, isPracticalAvailable, questionType]);
 
-  useEffect(() => {
     fetchQuestions();
+
+    return () => {
+      cancelled = true;
+    };
   }, [subject, concept, questionType]);
 
-  const fetchQuestions = async () => {
-    try {
-      setLoading(true);
-      setQuestions([]);
-      setCurrentIndex(0);
-      setAnswers({});
-      setResult(null);
-
-      let url =
-        `http://localhost:8080/questions?subject=${encodeURIComponent(
-          subject
-        )}&questionType=${encodeURIComponent(questionType)}`;
-
-      if (concept) {
-        url += `&concept=${encodeURIComponent(concept)}`;
-      }
-
-      const response = await axios.get(url);
-
-      setQuestions(response.data || []);
-    } catch (error) {
-      console.error("Error loading questions:", error);
-      setQuestions([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAssessmentChange = (type) => {
-    if (type === "PRACTICAL" && !isPracticalAvailable) {
-      return;
-    }
-
-    setQuestionType(type);
-  };
-
   const handleAnswer = (answer) => {
-    const currentQuestion = questions[currentIndex];
-
-    if (!currentQuestion) return;
+    const question = questions[currentIndex];
+    if (!question) return;
 
     setAnswers((previous) => ({
       ...previous,
-      [currentQuestion.id]: answer,
+      [question.id]: answer,
     }));
-  };
-
-  const nextQuestion = () => {
-    if (currentIndex < questions.length - 1) {
-      setCurrentIndex((previous) => previous + 1);
-    }
-  };
-
-  const previousQuestion = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex((previous) => previous - 1);
-    }
   };
 
   const submitQuiz = async () => {
     try {
       setSubmitting(true);
+      setError("");
 
       const response = await axios.post(
-        `http://localhost:8080/quiz/submit?subject=${encodeURIComponent(
-          subject
-        )}&concept=${encodeURIComponent(
-          concept
-        )}&questionType=${encodeURIComponent(questionType)}`,
+        `${API}/quiz/submit?subject=${encodeURIComponent(subject)}` +
+          `&concept=${encodeURIComponent(concept)}` +
+          `&questionType=${encodeURIComponent(questionType)}`,
         answers
       );
 
       setResult(response.data);
-    } catch (error) {
-      console.error("Error submitting quiz:", error);
-
-      alert(
-        "Unable to submit quiz. Make sure the Spring Boot backend is running."
-      );
+    } catch (e) {
+      console.error("Error submitting quiz:", e);
+      setError("Unable to submit assessment. Please check your backend.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const currentQuestion = questions[currentIndex];
+  const question = questions[currentIndex];
+  const selectedAnswer = question ? answers[question.id] : null;
+  const progress = questions.length
+    ? Math.round(((currentIndex + 1) / questions.length) * 100)
+    : 0;
 
-  const selectedAnswer = currentQuestion
-    ? answers[currentQuestion.id]
-    : null;
+  const getOption = (q, letter) =>
+    ({
+      A: q.optionA,
+      B: q.optionB,
+      C: q.optionC,
+      D: q.optionD,
+    })[letter] || "";
 
-  const progress =
-    questions.length > 0
-      ? Math.round(((currentIndex + 1) / questions.length) * 100)
-      : 0;
+  const renderQuestion = (q) => {
+    const formatted =
+      questionType === "PRACTICAL"
+        ? formatCodeQuestion(q.questionText)
+        : { prompt: q.questionText || "", code: "" };
+
+    return (
+      <>
+        {formatted.prompt && (
+          <h2 style={S.question}>{formatted.prompt}</h2>
+        )}
+
+        {formatted.code && (
+          <div style={S.codePanel}>
+            <div style={S.codeHeader}>
+              <span>🔴 🟡 🟢</span>
+              <span>
+                {subject === "DBMS"
+                  ? "SQL QUERY"
+                  : subject === "Java Programming"
+                    ? "JAVA CODE"
+                    : subject === "Python Programming"
+                      ? "PYTHON CODE"
+                      : "CODE SNIPPET"}
+              </span>
+            </div>
+            <pre style={S.code}>
+              <code>{formatted.code}</code>
+            </pre>
+          </div>
+        )}
+      </>
+    );
+  };
 
   if (loading) {
     return (
-      <div style={styles.page}>
-        <div style={styles.loadingCard}>
-          <div style={styles.loadingIcon}>🧠</div>
-          <h2>Preparing Assessment...</h2>
-          <p>Loading assessment questions...</p>
+      <div style={S.page}>
+        <div style={S.centerCard}>
+          <div style={{ fontSize: 48 }}>🧠</div>
+          <h2>Preparing your assessment...</h2>
+          <p>Loading your questions.</p>
         </div>
       </div>
     );
@@ -169,82 +234,69 @@ function Quiz() {
 
   if (result) {
     return (
-      <div style={styles.page}>
-        <div style={styles.resultCard}>
-          <div style={styles.resultIcon}>🎯</div>
+      <div style={S.page}>
+        <div style={S.resultCard}>
+          <div style={{ fontSize: 55 }}>🎉</div>
+          <span style={S.badge}>ASSESSMENT COMPLETE</span>
+          <h1>Great work!</h1>
+          <p>{subject}{concept ? ` · ${concept}` : ""}</p>
 
-          <div style={styles.resultBadge}>ASSESSMENT COMPLETE</div>
-
-          <h1>Knowledge Analysis Complete</h1>
-
-          <p style={styles.resultSubtitle}>
-            {subject}
-            {concept ? ` • ${concept}` : ""}
-          </p>
-
-          <div style={styles.scoreCircle}>
-            <span>{result.score}%</span>
+          <div style={S.scoreCircle}>
+            {result.score ?? 0}%
           </div>
 
-          <div style={styles.resultGrid}>
-            <div style={styles.resultBox}>
+          <div style={S.stats}>
+            <div style={S.stat}>
               <span>Total</span>
-              <strong>{result.totalQuestions}</strong>
+              <strong>{result.totalQuestions ?? questions.length}</strong>
             </div>
-
-            <div style={styles.resultBox}>
+            <div style={S.stat}>
               <span>Correct</span>
-              <strong>{result.correctAnswers}</strong>
+              <strong>{result.correctAnswers ?? 0}</strong>
             </div>
-
-            <div style={styles.resultBox}>
+            <div style={S.stat}>
               <span>Wrong</span>
-              <strong>{result.wrongAnswers}</strong>
+              <strong>{result.wrongAnswers ?? 0}</strong>
             </div>
           </div>
 
-          <div style={styles.resultButtons}>
-            <button
-              style={styles.primaryButton}
-              onClick={() =>
-                navigate("/knowledge-twin", {
-                  state: {
-                    subject,
-                    concept,
-                  },
-                })
-              }
-            >
-              🧠 Open Knowledge Twin
-            </button>
-
-            <button
-              style={styles.secondaryButton}
-              onClick={() => navigate("/dashboard")}
-            >
-              ← Back to Dashboard
-            </button>
-          </div>
+          <button
+            style={S.primary}
+            onClick={() =>
+              navigate("/knowledge-twin", { state: { subject, concept } })
+            }
+          >
+            🧠 Open Knowledge Twin
+          </button>
+          <button
+            style={S.secondary}
+            onClick={() => navigate("/dashboard")}
+          >
+            ← Back to Dashboard
+          </button>
         </div>
       </div>
     );
   }
 
-  if (questions.length === 0) {
+  if (!questions.length) {
     return (
-      <div style={styles.page}>
-        <div style={styles.emptyCard}>
-          <div style={styles.emptyIcon}>📭</div>
-
+      <div style={S.page}>
+        <div style={S.centerCard}>
+          <div style={{ fontSize: 48 }}>📭</div>
           <h2>No Questions Available</h2>
-
           <p>
-            There are currently no questions for <strong>{subject}</strong>
-            {concept ? ` → ${concept}` : ""}.
+            There are currently no {questionType.toLowerCase()} questions
+            for {subject}{concept ? ` → ${concept}` : ""}.
           </p>
-
+          {codingLab && (
+            <p style={{ color: "#7c3aed" }}>
+              Add questions with question_type = PRACTICAL to your database.
+            </p>
+          )}
+          {error && <p style={{ color: "#dc2626" }}>{error}</p>}
           <button
-            style={styles.secondaryButton}
+            style={S.primary}
             onClick={() => navigate("/dashboard")}
           >
             ← Back to Dashboard
@@ -255,178 +307,89 @@ function Quiz() {
   }
 
   return (
-    <div style={styles.page}>
-      <div style={styles.container}>
-        {/* HEADER */}
-        <div style={styles.header}>
+    <div style={S.page}>
+      <main style={S.container}>
+        <header style={S.header}>
           <button
-            style={styles.backButton}
+            style={S.secondary}
             onClick={() => navigate("/dashboard")}
           >
             ← Dashboard
           </button>
 
-          <div style={styles.headerCenter}>
-            <div style={styles.systemLabel}>LEARNTRACE INTELLIGENCE</div>
-
-            <h1>Knowledge Assessment</h1>
-
-            <p>
-              {subject}
-              {concept ? ` • ${concept}` : ""}
+          <div style={{ textAlign: "center" }}>
+            <div style={S.eyebrow}>LEARNTRACE · LEARNING STUDIO</div>
+            <h1 style={{ margin: "8px 0" }}>
+              {codingLab ? "💻 Coding Lab" : "Knowledge Assessment"}
+            </h1>
+            <p style={{ margin: 0, color: "#77738f" }}>
+              {subject}{concept ? ` · ${concept}` : ""}
             </p>
           </div>
 
-          <div style={styles.liveStatus}>
-            <span style={styles.liveDot}></span>
-            LIVE
-          </div>
-        </div>
+          <span style={S.live}>● READY</span>
+        </header>
 
-        {/* ASSESSMENT TYPE SELECTOR */}
-        <div style={styles.typeSection}>
-          <div style={styles.sectionTitle}>
-            <span>Choose Assessment Layer</span>
-            <small>
-              Different layers measure different dimensions of knowledge.
-            </small>
-          </div>
-
-          <div style={styles.typeGrid}>
-            {availableTypes.map((type) => {
-              const config = assessmentTypes[type];
-              const active = questionType === type;
-
-              return (
-                <button
-                  key={type}
-                  onClick={() => handleAssessmentChange(type)}
-                  style={{
-                    ...styles.typeCard,
-                    ...(active ? styles.activeTypeCard : {}),
-                  }}
-                >
-                  <div style={styles.typeIcon}>
-                    {type === "MCQ"
-                      ? "🧠"
-                      : type === "SCENARIO"
-                      ? "🎯"
-                      : "💻"}
-                  </div>
-
-                  <div style={styles.typeContent}>
-                    <strong>{config.label}</strong>
-                    <span>{config.description}</span>
-                  </div>
-
-                  {active && (
-                    <div style={styles.selectedIndicator}>✓</div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* PRACTICAL INFORMATION */}
-        {questionType === "PRACTICAL" && (
-          <div style={styles.practicalBanner}>
-            <div style={styles.practicalIcon}>💻</div>
-
-            <div>
-              <strong>Practical Intelligence Layer</strong>
-
-              <p>
-                This assessment checks whether you can actually apply the
-                concept using code, SQL, output prediction, or practical
-                problem-solving.
-              </p>
-
-              <div style={styles.tags}>
-                {subject === "Data Structures" && (
-                  <>
-                    <span>🐍 Python</span>
-                    <span>⚙️ Implementation</span>
-                    <span>🔍 Output Prediction</span>
-                  </>
-                )}
-
-                {subject === "DBMS" && (
-                  <>
-                    <span>🗄️ SQL</span>
-                    <span>🐍 Python + SQL</span>
-                    <span>🔍 Query Analysis</span>
-                  </>
-                )}
-
-                {subject === "Java Programming" && (
-                  <>
-                    <span>☕ Java</span>
-                    <span>⚙️ Code</span>
-                    <span>🔍 Output Prediction</span>
-                  </>
-                )}
-
-                {subject === "Python Programming" && (
-                  <>
-                    <span>🐍 Python</span>
-                    <span>⚙️ Code</span>
-                    <span>🔍 Output Prediction</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
+        {!codingLab && (
+          <section style={S.typeGrid}>
+            {availableTypes.map((type) => (
+              <button
+                key={type}
+                onClick={() => setQuestionType(type)}
+                style={{
+                  ...S.typeCard,
+                  ...(questionType === type ? S.activeType : {}),
+                }}
+              >
+                <strong>{types[type].label}</strong>
+                <span>{types[type].description}</span>
+              </button>
+            ))}
+          </section>
         )}
 
-        {/* QUIZ CARD */}
-        <div style={styles.quizCard}>
-          <div style={styles.quizTop}>
+        {codingLab && (
+          <section style={S.hero}>
+            <div style={{ fontSize: 30 }}>{"</>"}</div>
             <div>
-              <span style={styles.questionBadge}>
-                {assessmentTypes[questionType].badge}
-              </span>
-
-              <div style={styles.questionNumber}>
-                Question {currentIndex + 1}{" "}
-                <span>/ {questions.length}</span>
-              </div>
+              <h2 style={{ margin: "0 0 8px" }}>
+                Practical Challenge Mode
+              </h2>
+              <p style={{ margin: 0, lineHeight: 1.7 }}>
+                Focus on code snippets, output prediction and practical
+                problem-solving. Only practical questions are requested.
+              </p>
             </div>
+          </section>
+        )}
 
-            <div style={styles.progressContainer}>
-              <span>{progress}%</span>
-
-              <div style={styles.progressTrack}>
-                <div
-                  style={{
-                    ...styles.progressFill,
-                    width: `${progress}%`,
-                  }}
-                ></div>
+        <section style={S.quizCard}>
+          <div style={S.quizTop}>
+            <div>
+              <span style={S.badge}>{types[questionType].badge}</span>
+              <h3 style={{ marginBottom: 0 }}>
+                Question {currentIndex + 1} of {questions.length}
+              </h3>
+            </div>
+            <div style={{ minWidth: 100, textAlign: "right" }}>
+              <strong>{progress}%</strong>
+              <div style={S.progressTrack}>
+                <div style={{ ...S.progressFill, width: `${progress}%` }} />
               </div>
             </div>
           </div>
 
-          {/* QUESTION */}
-          <div style={styles.questionArea}>
-            <div style={styles.conceptTag}>
-              {currentQuestion.concept}
-            </div>
+          <div style={S.questionArea}>
+            <span style={S.concept}>
+              {question.concept || subject}
+            </span>
 
-            <h2>{currentQuestion.questionText}</h2>
+            {renderQuestion(question)}
 
-            <div style={styles.options}>
+            <div style={{ display: "grid", gap: 12, marginTop: 20 }}>
               {["A", "B", "C", "D"].map((letter) => {
-                const optionText =
-                  letter === "A"
-                    ? currentQuestion.optionA
-                    : letter === "B"
-                    ? currentQuestion.optionB
-                    : letter === "C"
-                    ? currentQuestion.optionC
-                    : currentQuestion.optionD;
-
-                if (!optionText) return null;
+                const value = getOption(question, letter);
+                if (!value) return null;
 
                 const selected = selectedAnswer === letter;
 
@@ -435,463 +398,307 @@ function Quiz() {
                     key={letter}
                     onClick={() => handleAnswer(letter)}
                     style={{
-                      ...styles.option,
-                      ...(selected ? styles.selectedOption : {}),
+                      ...S.option,
+                      ...(selected ? S.selectedOption : {}),
                     }}
                   >
-                    <div
+                    <span
                       style={{
-                        ...styles.optionLetter,
-                        ...(selected
-                          ? styles.selectedOptionLetter
-                          : {}),
+                        ...S.optionLetter,
+                        ...(selected ? S.selectedLetter : {}),
                       }}
                     >
                       {letter}
-                    </div>
-
-                    <div style={styles.optionText}>{optionText}</div>
-
-                    {selected && (
-                      <div style={styles.optionCheck}>✓</div>
-                    )}
+                    </span>
+                    <span style={{ flex: 1 }}>{value}</span>
+                    {selected && <strong>✓</strong>}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* FOOTER */}
-          <div style={styles.quizFooter}>
+          {error && (
+            <p style={{ color: "#dc2626", padding: "0 24px" }}>{error}</p>
+          )}
+
+          <footer style={S.footer}>
             <button
-              style={{
-                ...styles.secondaryButton,
-                opacity: currentIndex === 0 ? 0.4 : 1,
-              }}
+              style={S.secondary}
               disabled={currentIndex === 0}
-              onClick={previousQuestion}
+              onClick={() => setCurrentIndex((i) => i - 1)}
             >
               ← Previous
             </button>
 
-            <div style={styles.answeredCount}>
+            <span style={{ color: "#77738f", fontSize: 13 }}>
               {Object.keys(answers).length} / {questions.length} answered
-            </div>
+            </span>
 
             {currentIndex < questions.length - 1 ? (
               <button
-                style={{
-                  ...styles.primaryButton,
-                  opacity: selectedAnswer ? 1 : 0.5,
-                }}
+                style={S.primary}
                 disabled={!selectedAnswer}
-                onClick={nextQuestion}
+                onClick={() => setCurrentIndex((i) => i + 1)}
               >
                 Next Question →
               </button>
             ) : (
               <button
-                style={{
-                  ...styles.submitButton,
-                  opacity: selectedAnswer ? 1 : 0.5,
-                }}
+                style={S.primary}
                 disabled={!selectedAnswer || submitting}
                 onClick={submitQuiz}
               >
                 {submitting ? "Analyzing..." : "🚀 Submit Assessment"}
               </button>
             )}
-          </div>
-        </div>
-      </div>
+          </footer>
+        </section>
+      </main>
     </div>
   );
 }
 
-const styles = {
+const S = {
   page: {
     minHeight: "100vh",
-    background:
-      "radial-gradient(circle at 15% 10%, rgba(124,58,237,0.14), transparent 28%), radial-gradient(circle at 85% 15%, rgba(6,182,212,0.10), transparent 25%), #030712",
-    color: "#e5e7eb",
-    padding: "30px 20px 60px",
+    padding: "28px 18px 55px",
+    boxSizing: "border-box",
+    background: "linear-gradient(135deg,#f7f4ff,#effaff,#fff7f1)",
+    color: "#292342",
+    fontFamily: "Inter,Segoe UI,Arial,sans-serif",
   },
-
-  container: {
-    width: "100%",
-    maxWidth: "1100px",
-    margin: "0 auto",
-  },
-
+  container: { maxWidth: 1050, margin: "0 auto" },
   header: {
-    display: "grid",
-    gridTemplateColumns: "1fr 2fr 1fr",
-    alignItems: "center",
-    gap: "20px",
-    marginBottom: "35px",
-  },
-
-  backButton: {
-    justifySelf: "start",
-    background: "rgba(15,23,42,0.8)",
-    border: "1px solid rgba(148,163,184,0.2)",
-    color: "#cbd5e1",
-    padding: "10px 16px",
-    borderRadius: "10px",
-    fontSize: "14px",
-  },
-
-  headerCenter: {
-    textAlign: "center",
-  },
-
-  systemLabel: {
-    color: "#8b5cf6",
-    fontSize: "11px",
-    fontWeight: "800",
-    letterSpacing: "2px",
-    marginBottom: "8px",
-  },
-
-  liveStatus: {
-    justifySelf: "end",
     display: "flex",
+    justifyContent: "space-between",
     alignItems: "center",
-    gap: "7px",
-    fontSize: "11px",
-    fontWeight: "800",
-    color: "#22c55e",
+    gap: 18,
+    flexWrap: "wrap",
+    marginBottom: 28,
   },
-
-  liveDot: {
-    width: "7px",
-    height: "7px",
-    borderRadius: "50%",
-    background: "#22c55e",
+  eyebrow: {
+    color: "#8055d8",
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: 2,
   },
-
-  typeSection: {
-    marginBottom: "20px",
+  live: { color: "#059669", fontSize: 11, fontWeight: 900 },
+  hero: {
+    display: "flex",
+    gap: 18,
+    alignItems: "center",
+    padding: 24,
+    marginBottom: 20,
+    borderRadius: 20,
+    color: "white",
+    background: "linear-gradient(115deg,#4c278b,#8055e8,#b17af7)",
+    boxShadow: "0 12px 30px #8055e822",
   },
-
-  sectionTitle: {
-    marginBottom: "14px",
-  },
-
   typeGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "12px",
+    gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+    gap: 12,
+    marginBottom: 20,
   },
-
   typeCard: {
-    position: "relative",
-    display: "flex",
-    alignItems: "center",
-    gap: "13px",
+    display: "grid",
+    gap: 10,
     textAlign: "left",
-    padding: "17px",
-    borderRadius: "14px",
-    border: "1px solid rgba(148,163,184,0.15)",
-    background: "rgba(15,23,42,0.65)",
-    color: "#e5e7eb",
+    padding: 18,
+    borderRadius: 16,
+    border: "1px solid #e6e0f5",
+    background: "white",
+    color: "#292342",
+    cursor: "pointer",
   },
-
-  activeTypeCard: {
-    border: "1px solid rgba(139,92,246,0.7)",
-    background: "rgba(76,29,149,0.2)",
+  activeType: {
+    border: "2px solid #8055e8",
+    background: "#f4edff",
+    boxShadow: "0 8px 20px #8055e817",
   },
-
-  typeIcon: {
-    fontSize: "25px",
-  },
-
-  typeContent: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "5px",
-  },
-
-  selectedIndicator: {
-    position: "absolute",
-    top: "10px",
-    right: "10px",
-    width: "20px",
-    height: "20px",
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#7c3aed",
-    color: "white",
-    fontSize: "12px",
-  },
-
-  practicalBanner: {
-    display: "flex",
-    gap: "15px",
-    padding: "18px",
-    marginBottom: "20px",
-    borderRadius: "14px",
-    border: "1px solid rgba(6,182,212,0.25)",
-    background: "rgba(6,182,212,0.06)",
-  },
-
-  practicalIcon: {
-    fontSize: "28px",
-  },
-
-  tags: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "7px",
-  },
-
   quizCard: {
-    borderRadius: "18px",
-    border: "1px solid rgba(148,163,184,0.15)",
-    background: "rgba(15,23,42,0.72)",
+    background: "white",
+    borderRadius: 22,
+    border: "1px solid #e8e4f3",
+    boxShadow: "0 15px 45px #33215a0c",
     overflow: "hidden",
   },
-
   quizTop: {
+    padding: "22px 25px",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "20px 24px",
-    borderBottom: "1px solid rgba(148,163,184,0.1)",
+    gap: 18,
+    borderBottom: "1px solid #efedf6",
   },
-
-  questionBadge: {
+  badge: {
     display: "inline-block",
-    padding: "5px 9px",
-    borderRadius: "6px",
-    background: "rgba(124,58,237,0.15)",
-    color: "#a78bfa",
-    fontSize: "9px",
-    fontWeight: "900",
+    padding: "7px 10px",
+    borderRadius: 8,
+    background: "#efe7ff",
+    color: "#7140c2",
+    fontSize: 10,
+    fontWeight: 900,
+    letterSpacing: 0.6,
   },
-
-  questionNumber: {
-    marginTop: "9px",
-    fontWeight: "800",
-    fontSize: "16px",
-  },
-
-  progressContainer: {
-    width: "180px",
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-  },
-
   progressTrack: {
-    flex: 1,
-    height: "5px",
-    background: "#1e293b",
-    borderRadius: "10px",
+    height: 7,
+    background: "#ece8f8",
+    borderRadius: 20,
+    marginTop: 8,
     overflow: "hidden",
   },
-
   progressFill: {
     height: "100%",
-    background: "#7c3aed",
-    borderRadius: "10px",
+    borderRadius: 20,
+    background: "linear-gradient(90deg,#8b5cf6,#06b6d4,#34d399)",
+    transition: "width .25s",
   },
-
-  questionArea: {
-    padding: "35px 30px",
-  },
-
-  conceptTag: {
+  questionArea: { padding: "28px clamp(16px,4vw,32px)" },
+  concept: {
     display: "inline-block",
+    background: "#e7f8ff",
+    color: "#087b9d",
+    borderRadius: 7,
     padding: "6px 10px",
-    borderRadius: "7px",
-    background: "rgba(6,182,212,0.08)",
-    color: "#67e8f9",
-    fontSize: "11px",
-    fontWeight: "700",
-    marginBottom: "17px",
+    fontSize: 11,
+    fontWeight: 800,
+    marginBottom: 15,
   },
-
-  options: {
-    display: "grid",
-    gap: "12px",
+  question: {
+    fontSize: "clamp(18px,2.4vw,24px)",
+    lineHeight: 1.65,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
   },
-
+  codePanel: {
+    borderRadius: 14,
+    overflow: "hidden",
+    border: "1px solid #25345a",
+    margin: "18px 0",
+    background: "#11182c",
+  },
+  codeHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    padding: "12px 16px",
+    background: "#202844",
+    color: "#a5f3fc",
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: 1,
+  },
+  code: {
+    margin: 0,
+    padding: 22,
+    color: "#d9f99d",
+    fontSize: 14,
+    lineHeight: 1.9,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    fontFamily: "Consolas,Monaco,monospace",
+  },
   option: {
-    width: "100%",
     display: "flex",
     alignItems: "center",
-    gap: "15px",
+    gap: 14,
     textAlign: "left",
-    padding: "16px",
-    borderRadius: "12px",
-    border: "1px solid rgba(148,163,184,0.14)",
-    background: "rgba(2,6,23,0.45)",
-    color: "#cbd5e1",
+    padding: 14,
+    borderRadius: 13,
+    border: "1px solid #e7e4f0",
+    background: "#fff",
+    color: "#30294b",
+    cursor: "pointer",
+    fontSize: 14,
+    lineHeight: 1.6,
   },
-
   selectedOption: {
-    border: "1px solid rgba(139,92,246,0.75)",
-    background: "rgba(124,58,237,0.13)",
-    color: "#f8fafc",
+    border: "2px solid #8055e8",
+    background: "#f4efff",
   },
-
   optionLetter: {
-    flexShrink: 0,
-    width: "34px",
-    height: "34px",
-    borderRadius: "9px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#1e293b",
-    color: "#94a3b8",
-    fontWeight: "800",
+    width: 34,
+    height: 34,
+    minWidth: 34,
+    borderRadius: 10,
+    display: "grid",
+    placeItems: "center",
+    background: "#f0edf8",
+    color: "#6542ac",
+    fontWeight: 900,
   },
-
-  selectedOptionLetter: {
-    background: "#7c3aed",
-    color: "white",
-  },
-
-  optionText: {
-    flex: 1,
-    fontSize: "14px",
-  },
-
-  optionCheck: {
-    color: "#a78bfa",
-    fontSize: "18px",
-  },
-
-  quizFooter: {
+  selectedLetter: { background: "#8055e8", color: "white" },
+  footer: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "15px",
+    flexWrap: "wrap",
+    gap: 12,
     padding: "18px 24px",
-    borderTop: "1px solid rgba(148,163,184,0.1)",
+    borderTop: "1px solid #efedf6",
   },
-
-  answeredCount: {
-    color: "#64748b",
-    fontSize: "12px",
-  },
-
-  primaryButton: {
-    border: "none",
-    borderRadius: "10px",
-    padding: "11px 18px",
-    background: "#7c3aed",
+  primary: {
+    border: 0,
+    borderRadius: 11,
+    padding: "12px 18px",
+    background: "linear-gradient(110deg,#7040d5,#8b5cf6)",
     color: "white",
-    fontWeight: "800",
+    fontWeight: 800,
+    cursor: "pointer",
   },
-
-  submitButton: {
-    border: "none",
-    borderRadius: "10px",
-    padding: "11px 18px",
-    background: "#0891b2",
-    color: "white",
-    fontWeight: "800",
+  secondary: {
+    border: "1px solid #e4def2",
+    borderRadius: 11,
+    padding: "11px 15px",
+    background: "white",
+    color: "#6241ac",
+    fontWeight: 800,
+    cursor: "pointer",
   },
-
-  secondaryButton: {
-    border: "1px solid rgba(148,163,184,0.18)",
-    borderRadius: "10px",
-    padding: "10px 16px",
-    background: "rgba(15,23,42,0.8)",
-    color: "#cbd5e1",
-    fontWeight: "700",
-  },
-
-  loadingCard: {
-    width: "min(500px, 90%)",
-    margin: "15vh auto",
+  centerCard: {
+    maxWidth: 520,
+    margin: "12vh auto",
     textAlign: "center",
-    padding: "45px 30px",
-    borderRadius: "18px",
-    background: "rgba(15,23,42,0.75)",
+    padding: 35,
+    background: "white",
+    border: "1px solid #e8e4f3",
+    borderRadius: 22,
+    boxShadow: "0 15px 45px #33215a0c",
   },
-
-  loadingIcon: {
-    fontSize: "45px",
-    marginBottom: "15px",
-  },
-
-  emptyCard: {
-    width: "min(550px, 90%)",
-    margin: "15vh auto",
-    textAlign: "center",
-    padding: "45px 30px",
-    borderRadius: "18px",
-    background: "rgba(15,23,42,0.75)",
-  },
-
-  emptyIcon: {
-    fontSize: "45px",
-    marginBottom: "15px",
-  },
-
   resultCard: {
-    width: "min(700px, 94%)",
+    maxWidth: 650,
     margin: "5vh auto",
     textAlign: "center",
-    padding: "40px 30px",
-    borderRadius: "20px",
-    background: "rgba(15,23,42,0.8)",
+    padding: "35px 24px",
+    background: "white",
+    borderRadius: 24,
+    boxShadow: "0 15px 45px #33215a0c",
   },
-
-  resultIcon: {
-    fontSize: "45px",
-  },
-
-  resultBadge: {
-    display: "inline-block",
-    padding: "6px 10px",
-    borderRadius: "6px",
-    background: "rgba(34,197,94,0.1)",
-    color: "#4ade80",
-    fontSize: "9px",
-    fontWeight: "900",
-  },
-
-  resultSubtitle: {
-    color: "#64748b",
-  },
-
   scoreCircle: {
-    width: "150px",
-    height: "150px",
+    width: 145,
+    height: 145,
     borderRadius: "50%",
-    margin: "30px auto",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    border: "7px solid rgba(124,58,237,0.35)",
-  },
-
-  resultGrid: {
+    margin: "25px auto",
     display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "12px",
-    marginBottom: "22px",
+    placeItems: "center",
+    background: "#f0eaff",
+    border: "8px solid #a78bfa",
+    color: "#6235bb",
+    fontSize: 34,
+    fontWeight: 900,
   },
-
-  resultBox: {
-    padding: "15px",
-    borderRadius: "12px",
-    background: "rgba(2,6,23,0.5)",
+  stats: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+    gap: 12,
+    marginBottom: 25,
   },
-
-  resultButtons: {
-    display: "flex",
-    justifyContent: "center",
-    gap: "12px",
-    flexWrap: "wrap",
+  stat: {
+    display: "grid",
+    gap: 8,
+    padding: 16,
+    background: "#f7f5fc",
+    borderRadius: 13,
   },
 };
-
-export default Quiz;
