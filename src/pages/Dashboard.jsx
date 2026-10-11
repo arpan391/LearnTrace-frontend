@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
+
+const API = "https://learntrace-backend-vp2a.onrender.com";
 
 const SUBJECTS = [
   ["Data Structures", "📘", "Build strong foundations"],
@@ -12,6 +15,15 @@ const SUBJECTS = [
   ["Algorithms", "🧠", "Improve problem-solving"],
 ];
 
+function readStoredUser() {
+  try {
+    const user = JSON.parse(localStorage.getItem("user") || "null");
+    return user && typeof user === "object" ? user : null;
+  } catch {
+    return null;
+  }
+}
+
 function Dashboard() {
   const [concepts, setConcepts] = useState([]);
   const [path, setPath] = useState([]);
@@ -20,63 +32,145 @@ function Dashboard() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [apiWarning, setApiWarning] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [historyUnavailable, setHistoryUnavailable] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const location = useLocation();
   const navigate = useNavigate();
 
-  const name = location.state?.name || "Student";
-  const email = location.state?.email || "student@example.com";
+  const storedUser = readStoredUser();
+  const name =
+    storedUser?.name || location.state?.name || "Student";
+  const email =
+    storedUser?.email || location.state?.email || "";
 
   useEffect(() => {
     let alive = true;
 
-    Promise.allSettled([
-      axios.get(
-        "https://learntrace-backend-vp2a.onrender.com/analysis/knowledge-gaps"
-      ),
-      axios.get(
-        "https://learntrace-backend-vp2a.onrender.com/analysis/learning-path"
-      ),
-    ]).then((results) => {
-      if (!alive) return;
+    async function loadDashboard() {
+      const token = localStorage.getItem("authToken");
 
-      const [conceptResult, pathResult] = results;
-
-      if (conceptResult.status === "fulfilled") {
-        setConcepts(
-          Array.isArray(conceptResult.value.data)
-            ? conceptResult.value.data
-            : []
-        );
-      } else {
-        setApiWarning(true);
-        console.error(
-          "Knowledge gaps API failed:",
-          conceptResult.reason
-        );
+      if (!token) {
+        localStorage.removeItem("user");
+        navigate("/login", { replace: true });
+        return;
       }
 
-      if (pathResult.status === "fulfilled") {
-        setPath(
-          Array.isArray(pathResult.value.data)
-            ? pathResult.value.data
-            : []
-        );
-      } else {
-        setApiWarning(true);
-        console.error(
-          "Learning path API failed:",
-          pathResult.reason
-        );
-      }
+      const config = {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      };
 
-      setLoading(false);
-    });
+      try {
+        const results = await Promise.allSettled([
+          axios.get(`${API}/analysis/knowledge-gaps`, config),
+          axios.get(`${API}/analysis/learning-path`, config),
+          axios.get(`${API}/quiz/history`, config),
+        ]);
+
+        if (!alive) return;
+
+        const unauthorized = results.some(
+          (result) =>
+            result.status === "rejected" &&
+            result.reason?.response?.status === 401
+        );
+
+        if (unauthorized) {
+          localStorage.removeItem("user");
+          localStorage.removeItem("authToken");
+          navigate("/login", { replace: true });
+          return;
+        }
+
+        const [conceptResult, pathResult, historyResult] = results;
+
+        if (conceptResult.status === "fulfilled") {
+          setConcepts(
+            Array.isArray(conceptResult.value.data)
+              ? conceptResult.value.data
+              : []
+          );
+        } else {
+          setApiWarning(true);
+          console.error(
+            "Knowledge gaps API failed:",
+            conceptResult.reason
+          );
+        }
+
+        if (pathResult.status === "fulfilled") {
+          setPath(
+            Array.isArray(pathResult.value.data)
+              ? pathResult.value.data
+              : []
+          );
+        } else {
+          setApiWarning(true);
+          console.error(
+            "Learning path API failed:",
+            pathResult.reason
+          );
+        }
+
+        if (historyResult.status === "fulfilled") {
+          setHistory(
+            Array.isArray(historyResult.value.data)
+              ? historyResult.value.data
+              : []
+          );
+        } else {
+          setHistoryUnavailable(true);
+          setApiWarning(true);
+          console.error("Quiz history API failed:", historyResult.reason);
+        }
+      } catch (error) {
+        if (alive) {
+          setApiWarning(true);
+          console.error("Dashboard loading failed:", error);
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    loadDashboard();
 
     return () => {
       alive = false;
     };
-  }, []);
+  }, [navigate]);
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setLogoutError("");
+
+    try {
+      const token = localStorage.getItem("authToken");
+      if (token) {
+        await axios.post(`${API}/auth/logout`, null, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+      localStorage.removeItem("user");
+      localStorage.removeItem("authToken");
+      navigate("/login", { replace: true });
+    } catch (error) {
+      if (error.response?.status === 401) {
+        localStorage.removeItem("user");
+        localStorage.removeItem("authToken");
+        navigate("/login", { replace: true });
+      } else {
+        setLogoutError("Could not invalidate your server session. Check your connection and try again.");
+      }
+    } finally {
+      setLoggingOut(false);
+    }
+  };
 
   const assessed = useMemo(
     () => concepts.filter((c) => c.score != null),
@@ -220,6 +314,15 @@ function Dashboard() {
           </button>
 
           <button
+            className={!subject && activeSection === "history" ? "nav-item active" : "nav-item"}
+            onClick={() => chooseSection("history")}
+          >
+            <span className="nav-icon">◷</span>
+            <span>Assessment history</span>
+            <span className="nav-arrow">›</span>
+          </button>
+
+          <button
             className={
               !subject && activeSection === "domains"
                 ? "nav-item active"
@@ -299,6 +402,8 @@ function Dashboard() {
                 ? "Knowledge domains"
                 : activeSection === "path"
                 ? "Your learning path"
+                : activeSection === "history"
+                ? "Assessment history"
                 : "Learning overview"}
             </h1>
           </div>
@@ -334,14 +439,21 @@ function Dashboard() {
                 <small>{email}</small>
               </div>
             </div>
+            <button className="mobile-history-shortcut" onClick={() => chooseSection("history")}>
+              History
+            </button>
+            <button className="top-logout" onClick={handleLogout} disabled={loggingOut}>
+              {loggingOut ? "Signing out…" : "Sign out"}
+            </button>
           </div>
         </header>
 
+        {logoutError && <div className="api-warning" role="alert">{logoutError}</div>}
+
         {apiWarning && (
           <div className="api-warning">
-            Some learning data could not be loaded. Check that
-            the LearnTrace backend is running, then refresh
-            the page.
+            Some learning data could not be loaded. If this continues,
+            check the backend logs and refresh the page.
           </div>
         )}
 
@@ -514,7 +626,7 @@ function Dashboard() {
                 )}
               </div>
             ) : (
-              <EmptyState text="No subjects match your search. Try Java, Python, DBMS, or Algorithms." />
+              <EmptyState text="No subjects match your search." />
             )}
           </section>
         ) : activeSection === "path" ? (
@@ -537,6 +649,39 @@ function Dashboard() {
               getColor={getColor}
               onView={(item) => openSubject(item.subject)}
             />
+          </section>
+        ) : activeSection === "history" ? (
+          <section className="content-section">
+            <div className="section-heading">
+              <div>
+                <h2>Your assessment history</h2>
+                <p>Recent quiz results saved to your student account.</p>
+              </div>
+              <span className="soft-count">{history.length} attempts</span>
+            </div>
+            {historyUnavailable ? (
+              <EmptyState text="Assessment history could not be loaded. Refresh the page to try again." />
+            ) : history.length ? (
+              <div className="surface history-list">
+                {history.map((attempt) => (
+                  <article className="history-row" key={attempt.id}>
+                    <div className="history-title">
+                      <b>{attempt.concept || "Assessment"}</b>
+                      <span>{attempt.subject}</span>
+                    </div>
+                    <div className="history-result">
+                      <b>{Math.round(Number(attempt.score) || 0)}%</b>
+                      <span>{attempt.correctAnswers}/{attempt.totalQuestions} correct</span>
+                    </div>
+                    <time dateTime={attempt.attemptedAt}>
+                      {attempt.attemptedAt ? new Date(attempt.attemptedAt).toLocaleString() : "Date unavailable"}
+                    </time>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <EmptyState text="Your quiz attempts will appear here after your first assessment." />
+            )}
           </section>
         ) : (
           <>
@@ -1061,7 +1206,6 @@ button{cursor:pointer}
 .lt-topbar{min-height:108px;display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid #eeedf6;margin-bottom:27px}
 .page-intro .eyebrow{margin-bottom:7px}
 .page-intro h1{font:800 25px Manrope,sans-serif;letter-spacing:-.8px;margin:0}
-.eyebrow{font-size:9px;letter-spacing:1.35px;color:#9991bd;font-weight:800;display:block}
 .topbar-tools{display:flex;align-items:center;gap:20px}
 .search-box{height:42px;display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #eae8f3;border-radius:12px;padding:0 12px;color:#9899af;min-width:210px}
 .search-box>span{font-size:24px;line-height:1;transform:rotate(-20deg)}
@@ -1071,6 +1215,17 @@ button{cursor:pointer}
 .top-profile>div:last-child{display:flex;flex-direction:column;gap:4px}
 .top-profile b{font-size:12px}
 .top-profile small{max-width:170px;overflow:hidden;text-overflow:ellipsis;color:#999bb1;font-size:10px}
+.top-logout{border:1px solid #e3def1;background:#fff;color:#6e55bd;border-radius:9px;padding:9px 12px;font-size:11px;font-weight:800;white-space:nowrap}
+.mobile-history-shortcut{display:none;border:1px solid #e3def1;background:#fff;color:#6e55bd;border-radius:9px;padding:9px 12px;font-size:11px;font-weight:800;white-space:nowrap}
+.top-logout:disabled{opacity:.6;cursor:wait}
+.history-list{padding:0 18px}
+.history-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:17px 0;border-bottom:1px solid #efedf6}
+.history-row:last-child{border-bottom:0}
+.history-title,.history-result{display:flex;flex-direction:column;gap:5px}
+.history-title b{font-size:13px;color:#302a49}
+.history-title span,.history-result span,.history-row time{font-size:11px;color:#89879e}
+.history-result{text-align:right;min-width:110px}
+.history-result b{font-size:15px;color:#7054d3}
 .profile-avatar.mini{width:34px;height:34px;flex-basis:34px;border-radius:11px}
 .mobile-brand{display:none}
 .api-warning{border:1px solid #ffd9a4;background:#fff8e9;padding:13px 16px;border-radius:12px;color:#946317;margin-bottom:18px;font-size:12px}
@@ -1175,8 +1330,6 @@ button{cursor:pointer}
 .subject-card>p{font-size:9px;color:#9a9bb0;margin:0;min-height:25px;line-height:1.5}
 .subject-progress-meta{display:flex;align-items:center;justify-content:space-between;gap:5px;font-size:9px;color:#9899af;margin-top:15px}
 .subject-status{font-weight:800;font-size:8px;white-space:nowrap}
-.progress-track{height:6px;border-radius:99px;background:#f0eff7;overflow:hidden;margin-top:9px}
-.progress-track>span{display:block;height:100%;border-radius:99px;transition:width .6s ease}
 .subject-card-bottom{display:flex;align-items:center;justify-content:space-between;margin-top:13px;gap:8px;font-size:9px;color:#a0a1b5}
 .subject-card-bottom b{color:#8064e9;white-space:nowrap;font-size:9px}
 .subject-card-bottom b span{margin-left:3px}
@@ -1233,7 +1386,7 @@ button{cursor:pointer}
 @keyframes fadein{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 @media(min-width:1500px){.lt-main{padding-left:45px;padding-right:45px}.welcome-hero{min-height:300px}.hero-art{right:12%}.subject-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:1200px){.lt-sidebar{width:220px;flex-basis:220px}.lt-main{padding:0 22px}.stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.subject-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hero-art{right:3%;opacity:.9}.hero-copy{max-width:65%}.concept-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar-tools{gap:10px}.top-profile small{max-width:120px}}
-@media(max-width:820px){.lt-app{display:block}.lt-sidebar{display:none}.lt-main{padding:0 16px}.lt-topbar{min-height:90px;flex-wrap:wrap;padding:15px 0;gap:13px}.mobile-brand{display:flex;align-items:center;gap:8px;font:800 14px Manrope,sans-serif}.mobile-brand .brand-mark{width:32px;height:32px;border-radius:10px;font-size:14px}.page-intro{flex:1;min-width:170px}.page-intro h1{font-size:21px}.page-intro .eyebrow{font-size:8px}.topbar-tools{width:100%;justify-content:space-between}.search-box{flex:1;min-width:0}.top-profile{display:none}.welcome-hero{padding:25px;min-height:290px}.hero-copy{max-width:100%}.welcome-hero h2{font-size:30px}.hero-art{right:-56px;opacity:.22;top:8px}.hero-note{position:relative;right:auto;bottom:auto;margin-top:22px;width:max-content;max-width:100%}.welcome-hero{display:block}.dashboard-grid{grid-template-columns:1fr}.focus-surface{display:block}.subject-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.lt-footer{padding-bottom:20px}.chart-surface,.focus-surface,.surface{padding:17px}.insight-card{align-items:flex-start;flex-wrap:wrap}.insight-copy{min-width:calc(100% - 65px)}.insight-card>.button-primary{margin-left:59px}.detail-banner{padding:21px}.concept-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:820px){.lt-app{display:block}.lt-sidebar{display:none}.lt-main{padding:0 16px}.lt-topbar{min-height:90px;flex-wrap:wrap;padding:15px 0;gap:13px}.mobile-brand{display:flex;align-items:center;gap:8px;font:800 14px Manrope,sans-serif}.mobile-brand .brand-mark{width:32px;height:32px;border-radius:10px;font-size:14px}.page-intro{flex:1;min-width:170px}.page-intro h1{font-size:21px}.page-intro .eyebrow{font-size:8px}.topbar-tools{width:100%;justify-content:space-between}.search-box{flex:1;min-width:0}.top-profile{display:none}.top-logout{padding:8px 10px}.mobile-history-shortcut{display:inline-flex;padding:8px 10px}.history-row{align-items:flex-start;flex-wrap:wrap;gap:10px}.history-result{text-align:left;min-width:90px}.history-row time{width:100%}.welcome-hero{padding:25px;min-height:290px}.hero-copy{max-width:100%}.welcome-hero h2{font-size:30px}.hero-art{right:-56px;opacity:.22;top:8px}.hero-note{position:relative;right:auto;bottom:auto;margin-top:22px;width:max-content;max-width:100%}.welcome-hero{display:block}.dashboard-grid{grid-template-columns:1fr}.focus-surface{display:block}.subject-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.lt-footer{padding-bottom:20px}.chart-surface,.focus-surface,.surface{padding:17px}.insight-card{align-items:flex-start;flex-wrap:wrap}.insight-copy{min-width:calc(100% - 65px)}.insight-card>.button-primary{margin-left:59px}.detail-banner{padding:21px}.concept-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:540px){.stats-grid{gap:9px}.metric-card{padding:13px}.metric-value{font-size:23px}.metric-value.compact-value{font-size:15px}.metric-note{font-size:8px;line-height:1.5}.metric-label{font-size:10px}.welcome-hero{padding:22px 18px;border-radius:18px}.welcome-hero h2{font-size:27px}.hero-text-button{font-size:10px}.hero-actions{gap:10px}.hero-note{font-size:9px}.surface-heading{gap:8px}.surface-heading h2{font-size:15px}.surface-heading p{font-size:10px}.chart-badge{font-size:8px;padding:6px}.subject-grid{grid-template-columns:1fr}.subject-card{padding:15px}.concept-grid{grid-template-columns:1fr}.learning-item{gap:8px}.learning-step{width:28px;height:28px;flex-basis:28px}.learning-score{min-width:42px}.view-button{padding:7px}.learning-info b{font-size:10px}.learning-info span{font-size:8px}.section-heading h2{font-size:17px}.detail-banner{align-items:flex-start;padding:18px}.detail-banner h2{font-size:22px}.detail-banner p{font-size:10px}.detail-score{width:72px;height:72px;flex-basis:72px}.detail-score span{font-size:19px}.detail-score small{font-size:8px}.lt-footer{font-size:8px}.lt-footer span:last-child{text-align:right}.bar-chart{gap:5px}.bars-area{gap:4px;margin-left:29px}.bar-track{width:min(28px,85%)}.bar-label{font-size:7px}.profile-summary>div{grid-template-columns:8px minmax(0,1fr) auto}.path-surface .surface-heading,.domains-surface .surface-heading{align-items:flex-start}.header-link{font-size:9px}}
 `;
 

@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
@@ -17,7 +17,7 @@ function Register() {
     }
 
     try {
-      const response = await axios.post(
+      await axios.post(
         "https://learntrace-backend-vp2a.onrender.com/auth/register",
         {
           name: name.trim(),

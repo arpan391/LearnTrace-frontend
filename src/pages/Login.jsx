@@ -1,7 +1,8 @@
-
-import React, { useState } from "react";
+import { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+
+const API_URL = "https://learntrace-backend-vp2a.onrender.com";
 
 function Login() {
   const navigate = useNavigate();
@@ -16,66 +17,47 @@ function Login() {
       return;
     }
 
+    if (loading) return;
+
     try {
       setLoading(true);
 
-      const response = await axios.post(
-        "https://learntrace-backend-vp2a.onrender.com/auth/login",
-        {
-          email: email.trim(),
-          password: password,
-        }
-      );
+      const response = await axios.post(`${API_URL}/auth/login`, {
+        email: email.trim(),
+        password,
+      });
 
-      const message =
-        typeof response.data === "string"
-          ? response.data
-          : response.data?.message || "Login successful";
+      const data = response.data;
 
-      let studentName = "";
-
-      if (typeof response.data === "object" && response.data !== null) {
-        studentName =
-          response.data.name ||
-          response.data.fullName ||
-          response.data.username ||
-          response.data.studentName ||
-          "";
+      if (data?.id == null || !data?.token) {
+        throw new Error(
+          "The backend did not return a student ID and session token."
+        );
       }
-
-      if (!studentName && typeof response.data === "string") {
-        studentName = response.data.split(" for ")[1] || "";
-      }
-
-      studentName = studentName.trim();
 
       const user = {
-        name: studentName,
-        email: email.trim(),
+        id: data.id,
+        name: data.name || "",
+        email: data.email || email.trim(),
       };
 
+      // Store the current student's profile and session token.
       localStorage.setItem("user", JSON.stringify(user));
-
-      alert(message);
+      localStorage.setItem("authToken", data.token);
 
       navigate("/dashboard", {
-        state: {
-          name: user.name,
-          email: user.email,
-        },
+        replace: true,
+        state: user,
       });
     } catch (error) {
       console.error("Login error:", error);
 
-      const errorMessage =
-        typeof error.response?.data === "string"
-          ? error.response.data
-          : error.response?.data?.message ||
-            error.response?.data?.error ||
-            error.message ||
-            "Login failed. Please try again.";
+      const message =
+        error.response?.data?.message ||
+        error.message ||
+        "Login failed. Please try again.";
 
-      alert(errorMessage);
+      alert(message);
     } finally {
       setLoading(false);
     }
@@ -94,36 +76,44 @@ function Login() {
 
         <h2 style={styles.heading}>Welcome Back 👋</h2>
 
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-          style={styles.input}
-          autoComplete="email"
-        />
-
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-          style={styles.input}
-          autoComplete="current-password"
-        />
-
-        <button
-          style={{
-            ...styles.button,
-            opacity: loading ? 0.7 : 1,
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleLogin();
           }}
-          onClick={handleLogin}
-          disabled={loading}
         >
-          {loading ? "Logging in..." : "Login"}
-        </button>
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            style={styles.input}
+            autoComplete="email"
+            required
+          />
+
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            style={styles.input}
+            autoComplete="current-password"
+            required
+          />
+
+          <button
+            type="submit"
+            style={{
+              ...styles.button,
+              opacity: loading ? 0.7 : 1,
+              cursor: loading ? "wait" : "pointer",
+            }}
+            disabled={loading}
+          >
+            {loading ? "Logging in..." : "Login"}
+          </button>
+        </form>
 
         <p style={styles.signup}>
           Don't have an account?{" "}
@@ -214,7 +204,6 @@ const styles = {
     color: "white",
     fontSize: "16px",
     fontWeight: "bold",
-    cursor: "pointer",
   },
 
   signup: {
