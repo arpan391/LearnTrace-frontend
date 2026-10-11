@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 
@@ -9,7 +9,7 @@ function formatCodeQuestion(text) {
   if (!text) return { prompt: "", code: "" };
 
   const patterns = [
-    /\b(?:arr|nums|numbers|list|myList)\s*=\s*[\[({]/,
+    /\b(?:arr|nums|numbers|list|myList)\s*=\s*(?:\[|\(|\{)/,
     /\b(?:print|len|range|SELECT|INSERT|UPDATE|DELETE|CREATE|System\.out\.print|console\.log)\b/i,
     /\b(?:int|String|double|float|public\s+static|def\s+|for\s*\(|while\s*\(|if\s*\()/,
   ];
@@ -122,10 +122,11 @@ export default function Quiz() {
         }
       } catch (e) {
         console.error("Error loading questions:", e);
+
         if (!cancelled) {
           setQuestions([]);
           setError(
-            "Unable to load questions. Check that the backend is running."
+            "Unable to load questions. Please check your connection and try again."
           );
         }
       } finally {
@@ -151,21 +152,57 @@ export default function Quiz() {
   };
 
   const submitQuiz = async () => {
+    if (submitting) return;
+
+    const token = localStorage.getItem("authToken");
+
+    if (!token) {
+      setError("Your login session is missing. Please log in again.");
+      localStorage.removeItem("user");
+      navigate("/login", { replace: true });
+      return;
+    }
+
     try {
       setSubmitting(true);
       setError("");
 
+      const params = new URLSearchParams({
+        subject,
+        questionType,
+      });
+
+      if (concept.trim()) {
+        params.set("concept", concept.trim());
+      }
+
       const response = await axios.post(
-        `${API}/quiz/submit?subject=${encodeURIComponent(subject)}` +
-          `&concept=${encodeURIComponent(concept)}` +
-          `&questionType=${encodeURIComponent(questionType)}`,
-        answers
+        `${API}/quiz/submit?${params.toString()}`,
+        answers,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
       );
 
       setResult(response.data);
     } catch (e) {
       console.error("Error submitting quiz:", e);
-      setError("Unable to submit assessment. Please check your backend.");
+
+      if (e.response?.status === 401) {
+        localStorage.removeItem("user");
+        localStorage.removeItem("authToken");
+
+        setError("Your session has expired. Please log in again.");
+        navigate("/login", { replace: true });
+      } else {
+        setError(
+          e.response?.data?.message ||
+            "Unable to submit assessment. Please try again."
+        );
+      }
     } finally {
       setSubmitting(false);
     }
@@ -173,6 +210,7 @@ export default function Quiz() {
 
   const question = questions[currentIndex];
   const selectedAnswer = question ? answers[question.id] : null;
+
   const progress = questions.length
     ? Math.round(((currentIndex + 1) / questions.length) * 100)
     : 0;
@@ -211,6 +249,7 @@ export default function Quiz() {
                       : "CODE SNIPPET"}
               </span>
             </div>
+
             <pre style={S.code}>
               <code>{formatted.code}</code>
             </pre>
@@ -241,9 +280,7 @@ export default function Quiz() {
           <h1>Great work!</h1>
           <p>{subject}{concept ? ` · ${concept}` : ""}</p>
 
-          <div style={S.scoreCircle}>
-            {result.score ?? 0}%
-          </div>
+          <div style={S.scoreCircle}>{result.score ?? 0}%</div>
 
           <div style={S.stats}>
             <div style={S.stat}>
@@ -268,6 +305,7 @@ export default function Quiz() {
           >
             🧠 Open Knowledge Twin
           </button>
+
           <button
             style={S.secondary}
             onClick={() => navigate("/dashboard")}
@@ -289,12 +327,15 @@ export default function Quiz() {
             There are currently no {questionType.toLowerCase()} questions
             for {subject}{concept ? ` → ${concept}` : ""}.
           </p>
+
           {codingLab && (
             <p style={{ color: "#7c3aed" }}>
               Add questions with question_type = PRACTICAL to your database.
             </p>
           )}
+
           {error && <p style={{ color: "#dc2626" }}>{error}</p>}
+
           <button
             style={S.primary}
             onClick={() => navigate("/dashboard")}
@@ -371,6 +412,7 @@ export default function Quiz() {
                 Question {currentIndex + 1} of {questions.length}
               </h3>
             </div>
+
             <div style={{ minWidth: 100, textAlign: "right" }}>
               <strong>{progress}%</strong>
               <div style={S.progressTrack}>
@@ -410,6 +452,7 @@ export default function Quiz() {
                     >
                       {letter}
                     </span>
+
                     <span style={{ flex: 1 }}>{value}</span>
                     {selected && <strong>✓</strong>}
                   </button>
@@ -419,13 +462,15 @@ export default function Quiz() {
           </div>
 
           {error && (
-            <p style={{ color: "#dc2626", padding: "0 24px" }}>{error}</p>
+            <p role="alert" style={{ color: "#dc2626", padding: "0 24px" }}>
+              {error}
+            </p>
           )}
 
           <footer style={S.footer}>
             <button
               style={S.secondary}
-              disabled={currentIndex === 0}
+              disabled={currentIndex === 0 || submitting}
               onClick={() => setCurrentIndex((i) => i - 1)}
             >
               ← Previous
@@ -438,14 +483,17 @@ export default function Quiz() {
             {currentIndex < questions.length - 1 ? (
               <button
                 style={S.primary}
-                disabled={!selectedAnswer}
+                disabled={!selectedAnswer || submitting}
                 onClick={() => setCurrentIndex((i) => i + 1)}
               >
                 Next Question →
               </button>
             ) : (
               <button
-                style={S.primary}
+                style={{
+                  ...S.primary,
+                  opacity: submitting ? 0.7 : 1,
+                }}
                 disabled={!selectedAnswer || submitting}
                 onClick={submitQuiz}
               >

@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 
@@ -57,15 +57,44 @@ function KnowledgeTwin() {
   useEffect(() => {
     let mounted = true;
 
-    setLoading(true);
-    setError("");
+    async function loadKnowledgeTwin() {
+      setLoading(true);
+      setError("");
 
-    Promise.allSettled([
-      axios.get(`${API}/knowledge-gaps`),
-      axios.get(`${API}/learning-path`),
-    ])
-      .then(([conceptResult, pathResult]) => {
+      const token = localStorage.getItem("authToken");
+
+      if (!token) {
+        localStorage.removeItem("user");
+        navigate("/login", { replace: true });
+        return;
+      }
+
+      const config = {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      };
+
+      try {
+        const [conceptResult, pathResult] = await Promise.allSettled([
+          axios.get(`${API}/knowledge-gaps`, config),
+          axios.get(`${API}/learning-path`, config),
+        ]);
+
         if (!mounted) return;
+
+        const unauthorized = [conceptResult, pathResult].some(
+          (result) =>
+            result.status === "rejected" &&
+            result.reason?.response?.status === 401
+        );
+
+        if (unauthorized) {
+          localStorage.removeItem("user");
+          localStorage.removeItem("authToken");
+          navigate("/login", { replace: true });
+          return;
+        }
 
         if (conceptResult.status === "fulfilled") {
           const data = Array.isArray(conceptResult.value.data)
@@ -93,14 +122,22 @@ function KnowledgeTwin() {
               .filter((item) => scoreOf(item) !== null)
               .sort((a, b) => scoreOf(a) - scoreOf(b))[0];
 
-            return keyOf(requested || weakest || data[0] || {
-              id: "empty",
-              name: "empty",
-            });
+            return keyOf(
+              requested ||
+                weakest ||
+                data[0] || {
+                  id: "empty",
+                  name: "empty",
+                }
+            );
           });
         } else {
           setError(
             "Could not load your concept data. Check the backend and try again."
+          );
+          console.error(
+            "Knowledge gaps request failed:",
+            conceptResult.reason
           );
         }
 
@@ -116,21 +153,32 @@ function KnowledgeTwin() {
               ? `${previous} The learning path is also unavailable.`
               : "Could not load the learning path."
           );
+          console.error(
+            "Learning path request failed:",
+            pathResult.reason
+          );
         }
-      })
-      .catch(() => {
+      } catch (requestError) {
         if (mounted) {
+          console.error("Knowledge Twin loading failed:", requestError);
           setError("Unable to load Knowledge Twin data.");
         }
-      })
-      .finally(() => {
+      } finally {
         if (mounted) setLoading(false);
-      });
+      }
+    }
+
+    loadKnowledgeTwin();
 
     return () => {
       mounted = false;
     };
-  }, [refresh, location.state?.subject, location.state?.concept]);
+  }, [
+    refresh,
+    location.state?.subject,
+    location.state?.concept,
+    navigate,
+  ]);
 
   const subjects = useMemo(
     () =>
@@ -209,12 +257,7 @@ function KnowledgeTwin() {
   };
 
   const mappedNodes = useMemo(() => {
-    const lanes = [
-      [],
-      [],
-      [],
-      [],
-    ];
+    const lanes = [[], [], [], []];
 
     filteredConcepts.forEach((item) => {
       const score = scoreOf(item);
@@ -290,13 +333,15 @@ function KnowledgeTwin() {
     return result;
   }, [mappedNodes]);
 
-  const pathItems = useMemo(() => {
-    return learningPath.filter(
-      (item) =>
-        subjectFilter === "All subjects" ||
-        item.subject === subjectFilter
-    );
-  }, [learningPath, subjectFilter]);
+  const pathItems = useMemo(
+    () =>
+      learningPath.filter(
+        (item) =>
+          subjectFilter === "All subjects" ||
+          item.subject === subjectFilter
+      ),
+    [learningPath, subjectFilter]
+  );
 
   if (loading) {
     return (
@@ -322,7 +367,6 @@ function KnowledgeTwin() {
           onClick={() => navigate("/dashboard")}
         >
           <span className="twin-brand-logo">LT</span>
-
           <span>
             <b>LearnTrace</b>
             <small>KNOWLEDGE INTELLIGENCE</small>
@@ -336,7 +380,7 @@ function KnowledgeTwin() {
 
         <div className="twin-top-actions">
           <span className="twin-live">
-            <i /> Connected view
+            <i /> {error ? "Connection issue" : "Connected view"}
           </span>
 
           <button
@@ -422,7 +466,6 @@ function KnowledgeTwin() {
           </div>
         </section>
 
-        {/* SUMMARY */}
         <section className="twin-stats">
           <StatCard
             label="Average knowledge score"
@@ -431,7 +474,6 @@ function KnowledgeTwin() {
             theme="purple"
             detail="Based on assessed concepts"
           />
-
           <StatCard
             label="Concepts assessed"
             value={assessedCount}
@@ -439,7 +481,6 @@ function KnowledgeTwin() {
             theme="blue"
             detail={`Out of ${concepts.length} available`}
           />
-
           <StatCard
             label="Mastered"
             value={masteredCount}
@@ -447,7 +488,6 @@ function KnowledgeTwin() {
             theme="green"
             detail="Scores of 80% or higher"
           />
-
           <StatCard
             label="Needs attention"
             value={attentionCount}
@@ -457,7 +497,6 @@ function KnowledgeTwin() {
           />
         </section>
 
-        {/* INTERACTIVE NAVIGATION */}
         <section className="twin-workspace">
           <div className="twin-workspace-heading">
             <div>
@@ -472,7 +511,6 @@ function KnowledgeTwin() {
             <div className="twin-control-group">
               <label>
                 <span>Subject</span>
-
                 <select
                   value={subjectFilter}
                   onChange={(event) => {
@@ -481,9 +519,9 @@ function KnowledgeTwin() {
                   }}
                 >
                   <option>All subjects</option>
-                  {subjects.map((subject) => (
-                    <option key={subject} value={subject}>
-                      {subject}
+                  {subjects.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
                     </option>
                   ))}
                 </select>
@@ -491,7 +529,6 @@ function KnowledgeTwin() {
 
               <label>
                 <span>Concept status</span>
-
                 <select
                   value={statusFilter}
                   onChange={(event) => {
@@ -517,14 +554,12 @@ function KnowledgeTwin() {
             >
               <span>⌘</span> Knowledge map
             </button>
-
             <button
               className={activeView === "insights" ? "selected" : ""}
               onClick={() => setActiveView("insights")}
             >
               <span>◉</span> Insights & gaps
             </button>
-
             <button
               className={activeView === "path" ? "selected" : ""}
               onClick={() => setActiveView("path")}
@@ -543,7 +578,6 @@ function KnowledgeTwin() {
                       Click a node to see its details on the right.
                     </p>
                   </div>
-
                   <span className="twin-node-count">
                     {filteredConcepts.length} nodes
                   </span>
@@ -590,16 +624,13 @@ function KnowledgeTwin() {
                               width="198"
                               height="39"
                               rx="12"
-                              fill={
-                                [
-                                  "#f1f0f8",
-                                  "#fff2df",
-                                  "#edf2ff",
-                                  "#e9f9f2",
-                                ][index]
-                              }
+                              fill={[
+                                "#f1f0f8",
+                                "#fff2df",
+                                "#edf2ff",
+                                "#e9f9f2",
+                              ][index]}
                             />
-
                             <text
                               x={center}
                               y="38"
@@ -668,7 +699,6 @@ function KnowledgeTwin() {
                                   ? "Not assessed"
                                   : `${Math.round(score)}%`}
                               </title>
-
                               <rect
                                 x={node.x}
                                 y={node.y}
@@ -679,7 +709,6 @@ function KnowledgeTwin() {
                                 stroke={selected ? "#8768ec" : "#e9e6f3"}
                                 strokeWidth={selected ? "2.5" : "1.2"}
                               />
-
                               <rect
                                 x={node.x}
                                 y={node.y + 12}
@@ -688,14 +717,12 @@ function KnowledgeTwin() {
                                 rx="2"
                                 fill={color}
                               />
-
                               <circle
                                 cx={node.x + 19}
                                 cy={node.y + 21}
                                 r="4"
                                 fill={color}
                               />
-
                               <text
                                 x={node.x + 30}
                                 y={node.y + 25}
@@ -703,7 +730,6 @@ function KnowledgeTwin() {
                               >
                                 {displayName}
                               </text>
-
                               <text
                                 x={node.x + 15}
                                 y={node.y + 48}
@@ -713,7 +739,6 @@ function KnowledgeTwin() {
                                   ? "Ready to explore"
                                   : `${Math.round(score)}% score`}
                               </text>
-
                               <text
                                 x={node.x + node.width - 13}
                                 y={node.y + 47}
@@ -738,7 +763,6 @@ function KnowledgeTwin() {
                         <i className="map-legend-line" />
                         Dashed lines show detected prerequisite matches.
                       </span>
-
                       <span>
                         Connections appear when prerequisite names match
                         available concept names.
@@ -803,10 +827,8 @@ function KnowledgeTwin() {
                           <i style={{ background: item.color }} />
                           {item.label}
                         </span>
-
                         <b>{item.count}</b>
                       </div>
-
                       <div className="twin-performance-track">
                         <span
                           style={{
@@ -837,9 +859,7 @@ function KnowledgeTwin() {
                 <div className="twin-panel-heading">
                   <div>
                     <h3>Review next</h3>
-                    <p>
-                      Your lower-scoring assessed concepts.
-                    </p>
+                    <p>Your lower-scoring assessed concepts.</p>
                   </div>
                 </div>
 
@@ -860,18 +880,13 @@ function KnowledgeTwin() {
                             background: colorOf(statusOf(item)),
                           }}
                         />
-
                         <span className="twin-gap-name">
                           <b>{item.name}</b>
                           <small>{item.subject}</small>
                         </span>
-
-                        <strong
-                          style={{ color: colorOf(statusOf(item)) }}
-                        >
+                        <strong style={{ color: colorOf(statusOf(item)) }}>
                           {Math.round(scoreOf(item))}%
                         </strong>
-
                         <span className="twin-gap-arrow">→</span>
                       </button>
                     ))}
@@ -890,16 +905,13 @@ function KnowledgeTwin() {
             <section className="twin-path-view">
               <div className="twin-path-header">
                 <div>
-                  <span className="twin-eyebrow">
-                    YOUR NEXT STEPS
-                  </span>
+                  <span className="twin-eyebrow">YOUR NEXT STEPS</span>
                   <h3>Personalized learning path</h3>
                   <p>
                     Select a recommended concept to inspect it, or start
                     its assessment.
                   </p>
                 </div>
-
                 <span className="twin-path-count">
                   {pathItems.length} recommendations
                 </span>
@@ -919,27 +931,21 @@ function KnowledgeTwin() {
                       <div className="twin-path-number">
                         {item.step || index + 1}
                       </div>
-
                       <div className="twin-path-info">
                         <b>{item.name || "Recommended concept"}</b>
-
                         <span>
                           {item.subject || "Subject"} ·{" "}
                           {item.status || "Recommended"}
                         </span>
                       </div>
-
                       <div className="twin-path-score">
-                        <strong
-                          style={{ color: colorOf(statusOf(item)) }}
-                        >
+                        <strong style={{ color: colorOf(statusOf(item)) }}>
                           {item.score == null
                             ? "—"
                             : `${Math.round(Number(item.score))}%`}
                         </strong>
                         <small>Current score</small>
                       </div>
-
                       <button
                         className="twin-review-button"
                         onClick={() => {
@@ -987,7 +993,6 @@ function StatCard({ label, value, icon, theme, detail }) {
         <span className="twin-stat-icon">{icon}</span>
         <span className="twin-stat-mark">↗</span>
       </div>
-
       <strong>{value}</strong>
       <b>{label}</b>
       <small>{detail}</small>
@@ -1021,17 +1026,14 @@ function ConceptDetail({ concept, onAssess, onShowPath }) {
           style={{ background: color }}
         />
       </div>
-
       <div
         className="twin-detail-icon"
         style={{ color, background: `${color}17` }}
       >
         ✧
       </div>
-
       <h3>{concept.name}</h3>
       <p className="twin-detail-subject">{concept.subject}</p>
-
       <div
         className="twin-detail-status"
         style={{ color, background: `${color}17` }}
@@ -1044,7 +1046,6 @@ function ConceptDetail({ concept, onAssess, onShowPath }) {
           <span>Current score</span>
           <strong>{score === null ? "—" : `${Math.round(score)}%`}</strong>
         </div>
-
         <div className="twin-mini-ring">
           <div
             style={{
@@ -1072,12 +1073,10 @@ function ConceptDetail({ concept, onAssess, onShowPath }) {
           <span>Subject</span>
           <b>{concept.subject || "Not specified"}</b>
         </div>
-
         <div>
           <span>Prerequisite</span>
           <b>{concept.prerequisite || "Not specified"}</b>
         </div>
-
         <div>
           <span>Next step</span>
           <b>
@@ -1096,14 +1095,12 @@ function ConceptDetail({ concept, onAssess, onShowPath }) {
       >
         Take this assessment <span>→</span>
       </button>
-
       <button
         className="twin-detail-secondary"
         onClick={onShowPath}
       >
         View learning path
       </button>
-
       <p className="twin-detail-footnote">
         Scores and prerequisite details are based on the data available
         for this concept.
@@ -1123,7 +1120,6 @@ function EmptyTwin({ text }) {
 
 const twinStyles = `
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
-
 *{box-sizing:border-box}
 .twin-app{min-height:100vh;background:#f8f8fd;color:#292742;font-family:'DM Sans',Arial,sans-serif;font-size:13px}
 .twin-app button,.twin-app select,.twin-app input{font:inherit}
@@ -1325,6 +1321,7 @@ const twinStyles = `
   .twin-content{padding:16px 13px 0}
   .twin-hero{padding:24px 21px 65px;min-height:260px}
   .twin-hero-copy{max-width:100%}
+  .twin-hero h2{font-size:25px}
   .twin-hero-visual{right:-55px;opacity:.22}
   .twin-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
   .twin-workspace-heading{padding:18px;align-items:flex-start;flex-direction:column}
