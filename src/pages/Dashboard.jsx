@@ -659,6 +659,14 @@ function Dashboard() {
               </div>
               <span className="soft-count">{history.length} attempts</span>
             </div>
+            <div className="surface legacy-history-notice" role="note">
+              <strong>Unassigned legacy history</strong>
+              <p>
+                Older shared scores or quiz attempts may still exist. Records
+                without verified student ownership are kept separate and are
+                not included in this personal history.
+              </p>
+            </div>
             {historyUnavailable ? (
               <EmptyState text="Assessment history could not be loaded. Refresh the page to try again." />
             ) : history.length ? (
