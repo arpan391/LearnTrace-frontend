@@ -368,6 +368,15 @@ function Dashboard() {
             <span>Knowledge Twin</span>
             <span className="nav-arrow">↗</span>
           </button>
+
+          <button
+            className="nav-item"
+            onClick={() => navigate("/knowledge-radar")}
+          >
+            <span className="nav-icon">◎</span>
+            <span>Dependency Radar</span>
+            <span className="nav-arrow">↗</span>
+          </button>
         </nav>
 
         <div className="sidebar-tip">
@@ -761,6 +770,13 @@ function Dashboard() {
                     onClick={() => navigate("/knowledge-twin")}
                   >
                     Explore Knowledge Twin ↗
+                  </button>
+
+                  <button
+                    className="hero-text-button radar-shortcut"
+                    onClick={() => navigate("/knowledge-radar")}
+                  >
+                    Explore Dependency Radar ↗
                   </button>
                 </div>
               </div>
