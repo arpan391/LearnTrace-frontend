@@ -1,5 +1,4 @@
-
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 
@@ -125,7 +124,10 @@ function Dashboard() {
         } else {
           setHistoryUnavailable(true);
           setApiWarning(true);
-          console.error("Quiz history API failed:", historyResult.reason);
+          console.error(
+            "Quiz history API failed:",
+            historyResult.reason
+          );
         }
       } catch (error) {
         if (alive) {
@@ -146,18 +148,22 @@ function Dashboard() {
 
   const handleLogout = async () => {
     if (loggingOut) return;
+
     setLoggingOut(true);
     setLogoutError("");
 
     try {
       const token = localStorage.getItem("authToken");
+
       if (token) {
         await axios.post(`${API}/auth/logout`, null, {
           headers: { Authorization: `Bearer ${token}` },
         });
       }
+
       localStorage.removeItem("user");
       localStorage.removeItem("authToken");
+
       navigate("/login", { replace: true });
     } catch (error) {
       if (error.response?.status === 401) {
@@ -165,7 +171,9 @@ function Dashboard() {
         localStorage.removeItem("authToken");
         navigate("/login", { replace: true });
       } else {
-        setLogoutError("Could not invalidate your server session. Check your connection and try again.");
+        setLogoutError(
+          "Could not invalidate your server session. Check your connection and try again."
+        );
       }
     } finally {
       setLoggingOut(false);
@@ -314,7 +322,11 @@ function Dashboard() {
           </button>
 
           <button
-            className={!subject && activeSection === "history" ? "nav-item active" : "nav-item"}
+            className={
+              !subject && activeSection === "history"
+                ? "nav-item active"
+                : "nav-item"
+            }
             onClick={() => chooseSection("history")}
           >
             <span className="nav-icon">◷</span>
@@ -439,16 +451,38 @@ function Dashboard() {
                 <small>{email}</small>
               </div>
             </div>
-            <button className="mobile-history-shortcut" onClick={() => chooseSection("history")}>
+
+            {/* Added: navigate to the Change Password page */}
+            <button
+              type="button"
+              className="top-logout"
+              onClick={() => navigate("/profile")}
+            >
+              My Profile
+            </button>
+
+            <button
+              className="mobile-history-shortcut"
+              onClick={() => chooseSection("history")}
+            >
               History
             </button>
-            <button className="top-logout" onClick={handleLogout} disabled={loggingOut}>
+
+            <button
+              className="top-logout"
+              onClick={handleLogout}
+              disabled={loggingOut}
+            >
               {loggingOut ? "Signing out…" : "Sign out"}
             </button>
           </div>
         </header>
 
-        {logoutError && <div className="api-warning" role="alert">{logoutError}</div>}
+        {logoutError && (
+          <div className="api-warning" role="alert">
+            {logoutError}
+          </div>
+        )}
 
         {apiWarning && (
           <div className="api-warning">
@@ -655,10 +689,15 @@ function Dashboard() {
             <div className="section-heading">
               <div>
                 <h2>Your assessment history</h2>
-                <p>Recent quiz results saved to your student account.</p>
+                <p>
+                  Recent quiz results saved to your student account.
+                </p>
               </div>
-              <span className="soft-count">{history.length} attempts</span>
+              <span className="soft-count">
+                {history.length} attempts
+              </span>
             </div>
+
             {historyUnavailable ? (
               <EmptyState text="Assessment history could not be loaded. Refresh the page to try again." />
             ) : history.length ? (
@@ -670,11 +709,17 @@ function Dashboard() {
                       <span>{attempt.subject}</span>
                     </div>
                     <div className="history-result">
-                      <b>{Math.round(Number(attempt.score) || 0)}%</b>
-                      <span>{attempt.correctAnswers}/{attempt.totalQuestions} correct</span>
+                      <b>
+                        {Math.round(Number(attempt.score) || 0)}%
+                      </b>
+                      <span>
+                        {attempt.correctAnswers}/{attempt.totalQuestions} correct
+                      </span>
                     </div>
                     <time dateTime={attempt.attemptedAt}>
-                      {attempt.attemptedAt ? new Date(attempt.attemptedAt).toLocaleString() : "Date unavailable"}
+                      {attempt.attemptedAt
+                        ? new Date(attempt.attemptedAt).toLocaleString()
+                        : "Date unavailable"}
                     </time>
                   </article>
                 ))}
